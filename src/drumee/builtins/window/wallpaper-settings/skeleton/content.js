@@ -104,6 +104,7 @@ function __skl_window_wallpaper_settings_content(_ui_, opt) {
         type: _a.toggle,
         className: `${fig}__button`,
         service: "cancel-set-bg",
+        uiHandler: [_ui_],
         priority: "secondary"
       }),
       button(_ui_, {
@@ -111,6 +112,7 @@ function __skl_window_wallpaper_settings_content(_ui_, opt) {
         type: _a.toggle,
         className: `${fig}__button`,
         service: "apply-new-bg",
+        uiHandler: [_ui_],
         priority: "primary"
       })
     ],

@@ -274,22 +274,53 @@ class __window_wallpaper_settings extends __window_interact {
    * @param {File} file 
    */
   previewFileImage(file) {
-    if (!file || !file.type || !file.type.startsWith('image/')) return;
+    if (!file || !file.type || !file.type.startsWith('image/')) {
+      // Clear preview if not an image
+      this.clearPreviewImage();
+      return;
+    }
     
     this.ensurePart("uploader").then((uploaderPart) => {
       if (uploaderPart && uploaderPart.el) {
         const url = URL.createObjectURL(file);
+        
+        // Set background image with cover and positioning (similar to drag over)
         uploaderPart.el.style.backgroundImage = `url(${url})`;
+        uploaderPart.el.style.backgroundSize = 'cover';
+        uploaderPart.el.style.backgroundPosition = '50% 50%';
+        uploaderPart.el.style.backgroundRepeat = 'no-repeat';
         
         // Clean up old object URL when new one is set
         if (this._previewObjectUrl) {
           URL.revokeObjectURL(this._previewObjectUrl);
         }
         this._previewObjectUrl = url;
+        
+        this.debug("Preview image set for uploader", file.name);
       }
     }).catch((err) => {
       this.debug("Could not preview file image", err);
     });
+  }
+
+  /**
+   * Clear preview image from uploader
+   */
+  clearPreviewImage() {
+    this.ensurePart("uploader").then((uploaderPart) => {
+      if (uploaderPart && uploaderPart.el) {
+        uploaderPart.el.style.backgroundImage = '';
+        uploaderPart.el.style.backgroundSize = '';
+        uploaderPart.el.style.backgroundPosition = '';
+        uploaderPart.el.style.backgroundRepeat = '';
+      }
+    });
+    
+    // Clean up object URL
+    if (this._previewObjectUrl) {
+      URL.revokeObjectURL(this._previewObjectUrl);
+      this._previewObjectUrl = null;
+    }
   }
 
   /**
@@ -392,36 +423,75 @@ class __window_wallpaper_settings extends __window_interact {
    * @param {*} args
    */
   onUiEvent(cmd, args = {}) {
-    const service = args.service || cmd.service || cmd.mget(_a.service) || cmd.mget(_a.name);
-    this.debug(`__window_wallpaper_settings onUiEvent service=${service}`, cmd, this);
+    // Follow the same pattern as wallpaper/index.js and account/preferences/index.js
+    // Try multiple ways to get service to avoid undefined
+    let service;
+    
+    // First check args.service (from button clicks)
+    if (args.service) {
+      service = args.service;
+    }
+    // Check cmd.service directly
+    else if (cmd.service) {
+      service = cmd.service;
+    }
+    // Check if cmd has status and model (from account/preferences pattern)
+    else if (cmd.status === _e.submit && cmd.model && cmd.model.get) {
+      service = cmd.model.get(_a.service) || cmd.status;
+    }
+    // Check cmd.source (from account/preferences pattern)
+    else if (cmd.source != null && cmd.source.model && cmd.source.model.get) {
+      service = cmd.source.model.get(_a.service);
+    }
+    // Check cmd.model directly (for wallpaper gallery items)
+    else if (cmd.model && cmd.model.get) {
+      service = cmd.model.get(_a.service);
+    }
+    // Fallback to mget methods (from wallpaper/index.js pattern)
+    else if (cmd.mget) {
+      service = cmd.mget(_a.service) || cmd.mget(_a.name);
+    }
+    
+    // If service is still undefined, log warning and delegate to parent
+    if (!service) {
+      this.debug("onUiEvent: service is undefined, delegating to parent", cmd, args);
+      return super.onUiEvent(cmd, args);
+    }
+    
+    this.debug(`onUiEvent service=${service}`, cmd, this);
 
     switch (service) {
       case _e.close:
       case "close-popup":
         return this.goodbye();
 
-      case "cancel-set-bg":
-        return this.goodbye();
-
       case "apply-new-bg":
+        // Apply wallpaper or color that has been selected
+        // This is called when user clicks the "Apply & Save" button
+        // Follow the same pattern as account/preferences for applying wallpaper
         return this._applyWallpaper(cmd);
 
       case "upload-image":
-        // Handle button click to open file selector
-        const fileSelectorPart = this.findPart('fselector');
-        if (fileSelectorPart && fileSelectorPart.open) {
-          return fileSelectorPart.open((e) => {
-            // Handle file selection
-            const files = e.target.files || [];
-            if (files && files.length > 0) {
-              const file = files[0];
-              // Update file size text and preview
-              this.updateFileSizeText(file);
-              this.previewFileImage(file);
-              this.handleUpload(file);
-            }
-          });
-        }
+        // Handle button click to open file selector dialog
+        this.ensurePart('fselector').then((fileSelectorPart) => {
+          if (fileSelectorPart && fileSelectorPart.open) {
+            return fileSelectorPart.open((e) => {
+              // Handle file selection from dialog
+              const files = e.target.files || [];
+              if (files && files.length > 0) {
+                const file = files[0];
+                // Update file size text and preview
+                this.updateFileSizeText(file);
+                this.previewFileImage(file);
+                this.handleUpload(file);
+              }
+            });
+          } else {
+            this.warning("File selector part not found or open method not available");
+          }
+        }).catch((err) => {
+          this.error("Failed to open file selector", err);
+        });
         break;
 
       case "select-color":
@@ -446,6 +516,12 @@ class __window_wallpaper_settings extends __window_interact {
 
       case "set-wallpaper":
         // Store wallpaper selection (but don't apply yet - wait for Apply button)
+        // Follow the same pattern as account/preferences for getting wallpaper data
+        if (!cmd.model) {
+          this.warning("set-wallpaper: cmd.model is not available", cmd);
+          break;
+        }
+        
         this._selectedWallpaper = {
           nid: cmd.model.get(_a.nodeId),
           hub_id: cmd.model.get(_a.hub_id) || cmd.model.get(_a.ownerId),
@@ -471,6 +547,8 @@ class __window_wallpaper_settings extends __window_interact {
 
   /**
    * Apply wallpaper or color changes
+   * Follow the same pattern as account/preferences for setting wallpaper
+   * When Apply/Save button is clicked, this method applies the selected wallpaper or color
    */
   _applyWallpaper(cmd) {
     this.debug("_applyWallpaper", cmd, this._selectedColor, this._selectedWallpaper);
@@ -487,63 +565,92 @@ class __window_wallpaper_settings extends __window_interact {
         vhost: "",
         color: this._selectedColor
       };
-      this._selectedWallpaper = null; // Clear wallpaper selection if color is set
     } 
+
     // If wallpaper is selected (from gallery click), use it
-    else if (this._selectedWallpaper) {
+    // Follow the same pattern as account/preferences: create opt with nid, hub_id, vhost
+    // Use the wallpaper data that was stored when user clicked on a wallpaper item
+    else if (this._selectedWallpaper && this._selectedWallpaper.nid && this._selectedWallpaper.hub_id) {
       opt.wallpaper = {
         nid: this._selectedWallpaper.nid,
         hub_id: this._selectedWallpaper.hub_id,
         vhost: this._selectedWallpaper.vhost
       };
+    } else {
+      // No selection made
+      this.warning("_applyWallpaper: No wallpaper or color selected. _selectedWallpaper:", this._selectedWallpaper, "_selectedColor:", this._selectedColor);
+      return;
     }
 
-    // Apply settings
+    // Apply settings - follow the same pattern as account/preferences
+    // Use SERVICE.drumate.update_settings with settings: opt and hub_id: Visitor.id
     return this.postService({
       service: SERVICE.drumate.update_settings,
       settings: opt,
       hub_id: Visitor.id
     }, { async: 1 }).then((data) => {
+      // Update Visitor settings - same as preferences: Visitor.set({ settings: JSON.parse(data.settings) })
       Visitor.set({ settings: JSON.parse(data.settings) });
       
-      // Update desk module with color/wallpaper
+      // Update wallpaper/color based on what was selected
       if (this._selectedColor) {
-        // Apply color to desk
-        if (window.Desk && window.Desk.el) {
-          window.Desk.el.dataset.wallpaper = "0";
-          window.Desk.el.dataset.color = this._selectedColor;
-          window.Desk.el.style.backgroundColor = this._selectedColor;
-          // Apply color to main element too
-          const mainEl = window.Desk.el.querySelector('.desk-module__main');
-          if (mainEl) {
-            mainEl.dataset.wallpaper = "0";
-            mainEl.dataset.color = this._selectedColor;
-            mainEl.style.backgroundColor = this._selectedColor;
-          }
-          // Update internal state
+        // Apply color: clear wallpaper and set color
+        // Update desk module state to reflect color selection
+        if (window.Desk) {
           window.Desk._wallpaper = 0;
           window.Desk._color = this._selectedColor;
         }
-      } else if (this._selectedWallpaper) {
+      } else if (this._selectedWallpaper && this._selectedWallpaper.nid) {
+        // Apply wallpaper - same as preferences: use uiRouter.setWallpaper with Visitor.wallpaper()
         uiRouter.setWallpaper(Visitor.wallpaper());
-        // Clear color if wallpaper is set
-        if (window.Desk && window.Desk.el) {
-          window.Desk.el.style.backgroundColor = '';
-          const mainEl = window.Desk.el.querySelector('.desk-module__main');
-          if (mainEl) {
-            mainEl.style.backgroundColor = '';
-          }
+        
+        // Update desk module state to reflect wallpaper selection
+        if (window.Desk) {
+          window.Desk._wallpaper = 1;
           window.Desk._color = null;
         }
       }
       
-      // Restart desk to apply changes
+      // Update desk DOM immediately if it's already rendered
+      if (window.Desk && window.Desk.el) {
+        window.Desk.el.dataset.wallpaper = window.Desk._wallpaper || "0";
+        
+        if (window.Desk._color) {
+          window.Desk.el.dataset.color = window.Desk._color;
+          window.Desk.el.style.backgroundColor = window.Desk._color;
+        } else {
+          // Remove color attribute and background when wallpaper is set
+          if (window.Desk.el.dataset.color) {
+            delete window.Desk.el.dataset.color;
+          }
+          window.Desk.el.style.backgroundColor = '';
+        }
+        
+        // Update main element too
+        const mainEl = window.Desk.el.querySelector('.desk-module__main');
+        if (mainEl) {
+          mainEl.dataset.wallpaper = window.Desk._wallpaper || "0";
+          if (window.Desk._color) {
+            mainEl.dataset.color = window.Desk._color;
+            mainEl.style.backgroundColor = window.Desk._color;
+          } else {
+            if (mainEl.dataset.color) {
+              delete mainEl.dataset.color;
+            }
+            mainEl.style.backgroundColor = '';
+          }
+        }
+      }
+      
+      // Restart desk to ensure all changes are applied
       if (window.Desk && window.Desk.restart) {
         window.Desk.restart();
       }
       
       // Close window after applying
       return this.goodbye();
+    }).catch((error) => {
+      this.error("Failed to apply wallpaper/color settings", error);
     });
   }
 
